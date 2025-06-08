@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VPlate Checker</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 600px; margin: 30px auto; }
+  label { display: block; margin: 10px 0 5px; }
+  input { width: 100%; padding: 8px; box-sizing: border-box; }
+  button { margin-top: 15px; padding: 10px 15px; }
+  #progress-container { margin-top: 20px; background: #eee; border: 1px solid #ccc; height: 25px; width: 100%; display: none; }
+  #progress-bar { background: #4caf50; height: 100%; width: 0%; color: white; text-align: center; line-height: 25px; }
+  #spinner { display: none; margin-top: 10px; }
+  #result { margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<h2>VPlate Checker</h2>
+
+<form id="plateForm">
+  <label for="start">Starts with:</label>
+  <input type="text" id="start" name="start" maxlength="6" placeholder="e.g. BSTOL" />
+
+  <label for="end">Ends with:</label>
+  <input type="text" id="end" name="end" maxlength="6" placeholder="e.g. 001" />
+
+  <button type="submit">Check Plates</button>
+</form>
+
+<div id="progress-container">
+  <div id="progress-bar">0%</div>
+</div>
+
+<div id="spinner">Checking plates...</div>
+
+<div id="result"></div>
+
+<script>
+const form = document.getElementById('plateForm');
+const resultDiv = document.getElementById('result');
+const progressBar = document.getElementById('progress-bar');
+const progressContainer = document.getElementById('progress-container');
+const spinner = document.getElementById('spinner');
+
+form.addEventListener('submit', function(e) {
+  e.preventDefault();
+  const formData = new FormData(this);
+
+  resultDiv.innerHTML = '';
+  progressBar.style.width = '0%';
+  progressBar.innerText = '0%';
+  progressContainer.style.display = 'block';
+  spinner.style.display = 'block';
+
+  fetch('/check', {
+    method: 'POST',
+    body: formData
+  })
+  .then(res => res.json())
+  .then(data => {
+    spinner.style.display = 'none';
+
+    if (data.error) {
+      resultDiv.innerHTML = `<p style="color:red;">${data.error}</p>`;
+      progressBar.style.width = '0%';
+      progressBar.innerText = '0%';
+      return;
+    }
+
+    const percent = data.total === 0 ? 0 : Math.round((data.checked / data.total) * 100);
+    progressBar.style.width = `${percent}%`;
+    progressBar.innerText = `${percent}%`;
+
+    if (data.available.length) {
+      resultDiv.innerHTML = `<h4>Available Plates (${data.available.length}):</h4><ul>${data.available.map(p => `<li>${p}</li>`).join('')}</ul>`;
+    } else {
+      resultDiv.innerHTML = `<p>No available plates found.</p>`;
+    }
+  })
+  .catch(err => {
+    spinner.style.display = 'none';
+    progressContainer.style.display = 'none';
+    resultDiv.innerHTML = '<p style="color:red;">Something went wrong.</p>';
+    console.error(err);
+  });
+});
+</script>
+
+</body>
+</html>
