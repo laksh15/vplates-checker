@@ -9,8 +9,43 @@ import time
 import json
 from itertools import product
 import string
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 app = Flask(__name__)
+
+# Global driver instance with thread-local storage
+_driver = None
+_driver_lock = threading.Lock()
+
+def get_driver():
+    global _driver
+    if _driver is None:
+        with _driver_lock:
+            if _driver is None:
+                chrome_options = Options()
+                chrome_options.binary_location = "/usr/bin/chromium"
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument(
+                    "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+                )
+                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                chrome_options.add_experimental_option("useAutomationExtension", False)
+
+                service = Service("/usr/bin/chromedriver")
+                _driver = webdriver.Chrome(service=service, options=chrome_options)
+    return _driver
+
+def close_driver():
+    global _driver
+    if _driver is not None:
+        with _driver_lock:
+            if _driver is not None:
+                _driver.quit()
+                _driver = None
 
 def generate_combinations(start, end, total_length=6):
     start, end = start.upper(), end.upper()
@@ -22,43 +57,26 @@ def generate_combinations(start, end, total_length=6):
         return [start + end]
     return [start + ''.join(c) + end for c in product(chars, repeat=middle_len)]
 
-def is_plate_available_selenium(plate):
+def check_single_plate(plate):
     ts = int(time.time())
     api_url = (
         "https://vplates.com.au/vplatesapi/checkcombo"
         f"?vehicleType=car&combination={plate}&_={ts}"
     )
-    print(f"[Selenium] Navigating to API URL for {plate}")
     
-    chrome_options = Options()
-    chrome_options.binary_location = "/usr/bin/chromium"  # add if needed
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument(
-        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-    )
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-
-    service = Service("/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-
+    driver = get_driver()
+    
     try:
         driver.get(api_url)
-        WebDriverWait(driver, 5).until(
+        WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.TAG_NAME, 'body'))
         )
         raw = driver.find_element(By.TAG_NAME, 'body').text
-        print(f"[Selenium] Raw API response for {plate}:\n{raw}")
         data = json.loads(raw)
         return data.get("status", "").lower() == "available"
     except Exception as e:
-        print(f"[Selenium] Error loading API JSON for {plate}: {e}")
+        print(f"Error checking plate {plate}: {str(e)}")
         return False
-    finally:
-        driver.quit()
 
 @app.route('/')
 def index():
@@ -67,29 +85,52 @@ def index():
 @app.route('/check', methods=['POST'])
 def check_plates():
     start = request.form.get('start', '').strip()
-    end   = request.form.get('end',   '').strip()
-    if not start and not end:
-        return jsonify(error="Please provide at least a start or end pattern.",
-                       checked=0, total=0, available=[])
+    end = request.form.get('end', '').strip()
     
-    plates  = generate_combinations(start, end)
-    total   = len(plates)
-    checked = 0
-    available = []
-
+    if not start and not end:
+        return jsonify(
+            error="Please provide at least a start or end pattern.",
+            checked=0,
+            total=0,
+            available=[]
+        )
+    
+    plates = generate_combinations(start, end)
+    total = len(plates)
+    
+    if total > 1000:  # Safety limit
+        return jsonify(
+            error="Too many combinations to check (max 1000). Please refine your search.",
+            checked=0,
+            total=total,
+            available=[]
+        )
+    
     print(f"Checking {total} combinations for start='{start}' end='{end}'")
+    
+    try:
+        # Use thread pool to check plates in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(check_single_plate, plates))
+        
+        available = [plate for plate, ok in zip(plates, results) if ok]
+        checked = len(plates)
+        
+        resp = dict(checked=checked, total=total, available=available)
+        print(f"Completed. Found {len(available)} available plates.")
+        return jsonify(resp)
+    
+    except Exception as e:
+        return jsonify(
+            error=f"An error occurred: {str(e)}",
+            checked=0,
+            total=total,
+            available=[]
+        )
 
-    for plate in plates:
-        checked += 1
-        ok = is_plate_available_selenium(plate)
-        print(f"→ {plate} is {'AVAILABLE' if ok else 'TAKEN'}")
-        if ok:
-            available.append(plate)
-        time.sleep(0.2)
-
-    resp = dict(checked=checked, total=total, available=available)
-    print("Final response JSON:", json.dumps(resp, indent=2))
-    return jsonify(resp)
+@app.teardown_appcontext
+def teardown(exception=None):
+    close_driver()
 
 if __name__ == '__main__':
     app.run(debug=True)
