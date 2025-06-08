@@ -1,13 +1,14 @@
 from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 import json
 from itertools import product
 import string
-from selenium.webdriver.chrome.service import Service
-
 
 app = Flask(__name__)
 
@@ -21,11 +22,6 @@ def generate_combinations(start, end, total_length=6):
         return [start + end]
     return [start + ''.join(c) + end for c in product(chars, repeat=middle_len)]
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-import time, json
-
 def is_plate_available_selenium(plate):
     ts = int(time.time())
     api_url = (
@@ -34,21 +30,26 @@ def is_plate_available_selenium(plate):
     )
     print(f"[Selenium] Navigating to API URL for {plate}")
     
-    # Setup Chrome options
-
     chrome_options = Options()
+    chrome_options.binary_location = "/usr/bin/chromium"  # add if needed
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    )
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
 
-    # Explicit path to chromedriver Update
     service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-
     try:
         driver.get(api_url)
-        time.sleep(1)
+        WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.TAG_NAME, 'body'))
+        )
         raw = driver.find_element(By.TAG_NAME, 'body').text
         print(f"[Selenium] Raw API response for {plate}:\n{raw}")
         data = json.loads(raw)
@@ -58,7 +59,6 @@ def is_plate_available_selenium(plate):
         return False
     finally:
         driver.quit()
-
 
 @app.route('/')
 def index():
@@ -93,5 +93,3 @@ def check_plates():
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-  #Update
