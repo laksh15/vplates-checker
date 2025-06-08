@@ -19,9 +19,12 @@ def generate_combinations(start, end, total_length=6):
         return [start + end]
     return [start + ''.join(c) + end for c in product(chars, repeat=middle_len)]
 
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+import time, json
 
 def is_plate_available_selenium(plate):
-    # Build the internal API URL with timestamp
     ts = int(time.time())
     api_url = (
         "https://vplates.com.au/vplatesapi/checkcombo"
@@ -29,21 +32,23 @@ def is_plate_available_selenium(plate):
     )
     print(f"[Selenium] Navigating to API URL for {plate}")
     
-    # Configure ChromeOptions to mimic a real browser
+    # Setup Chrome options
     opts = Options()
-    opts.headless = True
-    opts.add_argument(
-        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/114.0.0.0 Safari/537.36"
-    )
+    opts.binary_location = "/usr/bin/chromium"  # IMPORTANT for Render
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/114.0.0.0 Safari/537.36")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option('useAutomationExtension', False)
+    opts.add_experimental_option("useAutomationExtension", False)
+
+    # Explicit path to chromedriver
+    driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=opts)
     
-    driver = webdriver.Chrome(options=opts)
     try:
         driver.get(api_url)
-        # Give the JSON time to load
         time.sleep(1)
         raw = driver.find_element(By.TAG_NAME, 'body').text
         print(f"[Selenium] Raw API response for {plate}:\n{raw}")
@@ -54,6 +59,7 @@ def is_plate_available_selenium(plate):
         return False
     finally:
         driver.quit()
+
 
 @app.route('/')
 def index():
