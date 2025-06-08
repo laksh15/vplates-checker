@@ -9,62 +9,59 @@ import time
 import json
 from itertools import product
 import string
-from concurrent.futures import ThreadPoolExecutor
-import threading
 import os
+import subprocess
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration
-CHROME_DRIVER_PATH = os.environ.get('CHROME_DRIVER_PATH', '/usr/bin/chromedriver')
-CHROME_BINARY_PATH = os.environ.get('CHROME_BINARY_PATH', '/usr/bin/chromium')
-MAX_WORKERS = 4  # Adjust based on your Render plan
+# Configuration - these paths work on Render's Ubuntu environment
+CHROME_DRIVER_PATH = os.environ.get('CHROME_DRIVER_PATH', '/usr/local/bin/chromedriver')
+CHROME_BINARY_PATH = os.environ.get('CHROME_BINARY_PATH', '/usr/bin/google-chrome')
 
-# Global driver instance with thread-local storage
-_driver = None
-_driver_lock = threading.Lock()
+def verify_chrome_installation():
+    """Verify Chrome/Chromium and ChromeDriver are properly installed"""
+    try:
+        # Check Chrome/Chromium
+        chrome_version = subprocess.check_output([CHROME_BINARY_PATH, '--version'], stderr=subprocess.STDOUT)
+        logger.info(f"Chrome version: {chrome_version.decode().strip()}")
+        
+        # Check ChromeDriver
+        driver_version = subprocess.check_output([CHROME_DRIVER_PATH, '--version'], stderr=subprocess.STDOUT)
+        logger.info(f"ChromeDriver version: {driver_version.decode().strip()}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Verification failed: {str(e)}")
+        return False
 
-def get_driver():
-    global _driver
-    if _driver is None:
-        with _driver_lock:
-            if _driver is None:
-                print(f"Initializing ChromeDriver with binary at: {CHROME_BINARY_PATH}")
-                chrome_options = Options()
-                chrome_options.binary_location = CHROME_BINARY_PATH
-                chrome_options.add_argument("--headless")
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--disable-dev-shm-usage")
-                chrome_options.add_argument("--disable-gpu")
-                chrome_options.add_argument("--window-size=1920,1080")
-                chrome_options.add_argument(
-                    "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-                )
-                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-                chrome_options.add_experimental_option("useAutomationExtension", False)
+def create_driver():
+    """Create and configure a Chrome WebDriver instance"""
+    chrome_options = Options()
+    chrome_options.binary_location = CHROME_BINARY_PATH
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    )
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
 
-                service = Service(executable_path=CHROME_DRIVER_PATH)
-                try:
-                    _driver = webdriver.Chrome(service=service, options=chrome_options)
-                    print("ChromeDriver initialized successfully")
-                except Exception as e:
-                    print(f"Failed to initialize ChromeDriver: {str(e)}")
-                    raise
-    return _driver
+    service = Service(executable_path=CHROME_DRIVER_PATH)
+    return webdriver.Chrome(service=service, options=chrome_options)
 
-def close_driver():
-    global _driver
-    if _driver is not None:
-        with _driver_lock:
-            if _driver is not None:
-                try:
-                    _driver.quit()
-                    print("ChromeDriver closed successfully")
-                except Exception as e:
-                    print(f"Error closing ChromeDriver: {str(e)}")
-                finally:
-                    _driver = None
+# Verify installations when starting up
+if not verify_chrome_installation():
+    logger.error("Chrome/Chromium or ChromeDriver not properly installed!")
+    # Continue anyway - Render's health check will fail if this is critical
 
 def generate_combinations(start, end, total_length=6):
     start, end = start.upper(), end.upper()
@@ -76,7 +73,8 @@ def generate_combinations(start, end, total_length=6):
         return [start + end]
     return [start + ''.join(c) + end for c in product(chars, repeat=middle_len)]
 
-def check_single_plate(plate):
+def check_plate_availability(plate):
+    """Check if a single plate is available"""
     ts = int(time.time())
     api_url = (
         "https://vplates.com.au/vplatesapi/checkcombo"
@@ -84,16 +82,19 @@ def check_single_plate(plate):
     )
     
     try:
-        driver = get_driver()
-        driver.get(api_url)
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, 'body'))
-        )
-        raw = driver.find_element(By.TAG_NAME, 'body').text
-        data = json.loads(raw)
-        return data.get("status", "").lower() == "available"
+        driver = create_driver()
+        try:
+            driver.get(api_url)
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, 'body'))
+            )
+            raw = driver.find_element(By.TAG_NAME, 'body').text
+            data = json.loads(raw)
+            return data.get("status", "").lower() == "available"
+        finally:
+            driver.quit()
     except Exception as e:
-        print(f"Error checking plate {plate}: {str(e)}")
+        logger.error(f"Error checking plate {plate}: {str(e)}")
         return False
 
 @app.route('/')
@@ -124,31 +125,18 @@ def check_plates():
             available=[]
         )
     
-    print(f"Checking {total} combinations for start='{start}' end='{end}'")
+    logger.info(f"Checking {total} combinations for start='{start}' end='{end}'")
     
-    try:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            results = list(executor.map(check_single_plate, plates))
-        
-        available = [plate for plate, ok in zip(plates, results) if ok]
-        checked = len(plates)
-        
-        return jsonify(
-            checked=checked,
-            total=total,
-            available=available
-        )
-    except Exception as e:
-        return jsonify(
-            error=f"An error occurred: {str(e)}",
-            checked=0,
-            total=total,
-            available=[]
-        )
-
-@app.teardown_appcontext
-def teardown(exception=None):
-    close_driver()
+    available = []
+    for plate in plates:
+        if check_plate_availability(plate):
+            available.append(plate)
+    
+    return jsonify(
+        checked=len(plates),
+        total=total,
+        available=available
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)
