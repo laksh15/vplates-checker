@@ -15,7 +15,7 @@ ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 WORKDIR /app
 
 # Copy code
-COPY . .
+COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
@@ -25,3 +25,13 @@ EXPOSE 8080
 
 # Start command
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
+
+
+RUN apt-get update && \
+    apt-get install -y chromium chromium-driver && \
+    apt-get clean
+
+
+
+
+

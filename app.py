@@ -11,8 +11,14 @@ from itertools import product
 import string
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import os
 
 app = Flask(__name__)
+
+# Configuration
+CHROME_DRIVER_PATH = os.environ.get('CHROME_DRIVER_PATH', '/usr/bin/chromedriver')
+CHROME_BINARY_PATH = os.environ.get('CHROME_BINARY_PATH', '/usr/bin/chromium')
+MAX_WORKERS = 4  # Adjust based on your Render plan
 
 # Global driver instance with thread-local storage
 _driver = None
@@ -23,11 +29,14 @@ def get_driver():
     if _driver is None:
         with _driver_lock:
             if _driver is None:
+                print(f"Initializing ChromeDriver with binary at: {CHROME_BINARY_PATH}")
                 chrome_options = Options()
-                chrome_options.binary_location = "/usr/bin/chromium"
+                chrome_options.binary_location = CHROME_BINARY_PATH
                 chrome_options.add_argument("--headless")
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument("--disable-gpu")
+                chrome_options.add_argument("--window-size=1920,1080")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
@@ -35,8 +44,13 @@ def get_driver():
                 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 chrome_options.add_experimental_option("useAutomationExtension", False)
 
-                service = Service("/usr/bin/chromedriver")
-                _driver = webdriver.Chrome(service=service, options=chrome_options)
+                service = Service(executable_path=CHROME_DRIVER_PATH)
+                try:
+                    _driver = webdriver.Chrome(service=service, options=chrome_options)
+                    print("ChromeDriver initialized successfully")
+                except Exception as e:
+                    print(f"Failed to initialize ChromeDriver: {str(e)}")
+                    raise
     return _driver
 
 def close_driver():
@@ -44,8 +58,13 @@ def close_driver():
     if _driver is not None:
         with _driver_lock:
             if _driver is not None:
-                _driver.quit()
-                _driver = None
+                try:
+                    _driver.quit()
+                    print("ChromeDriver closed successfully")
+                except Exception as e:
+                    print(f"Error closing ChromeDriver: {str(e)}")
+                finally:
+                    _driver = None
 
 def generate_combinations(start, end, total_length=6):
     start, end = start.upper(), end.upper()
@@ -64,9 +83,8 @@ def check_single_plate(plate):
         f"?vehicleType=car&combination={plate}&_={ts}"
     )
     
-    driver = get_driver()
-    
     try:
+        driver = get_driver()
         driver.get(api_url)
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.TAG_NAME, 'body'))
@@ -98,7 +116,7 @@ def check_plates():
     plates = generate_combinations(start, end)
     total = len(plates)
     
-    if total > 1000:  # Safety limit
+    if total > 1000:
         return jsonify(
             error="Too many combinations to check (max 1000). Please refine your search.",
             checked=0,
@@ -109,17 +127,17 @@ def check_plates():
     print(f"Checking {total} combinations for start='{start}' end='{end}'")
     
     try:
-        # Use thread pool to check plates in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             results = list(executor.map(check_single_plate, plates))
         
         available = [plate for plate, ok in zip(plates, results) if ok]
         checked = len(plates)
         
-        resp = dict(checked=checked, total=total, available=available)
-        print(f"Completed. Found {len(available)} available plates.")
-        return jsonify(resp)
-    
+        return jsonify(
+            checked=checked,
+            total=total,
+            available=available
+        )
     except Exception as e:
         return jsonify(
             error=f"An error occurred: {str(e)}",
