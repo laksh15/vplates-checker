@@ -35,19 +35,16 @@ def is_plate_available_selenium(plate):
     print(f"[Selenium] Navigating to API URL for {plate}")
     
     # Setup Chrome options
-    opts = Options()
-    opts.binary_location = "/usr/bin/chromium"  # IMPORTANT for Render
-    opts.add_argument("--headless")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/114.0.0.0 Safari/537.36")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
+
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
 
     # Explicit path to chromedriver Update
-    driver = webdriver.Chrome(options=opts)
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
 
     try:
         driver.get(api_url)
