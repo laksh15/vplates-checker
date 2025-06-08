@@ -48,8 +48,7 @@ def is_plate_available_selenium(plate):
 
     # Explicit path to chromedriver
   
-    service = Service("/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=opts)
+   driver = webdriver.Chrome(options=opts)
 
     try:
         driver.get(api_url)
