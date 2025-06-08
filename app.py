@@ -6,6 +6,8 @@ import time
 import json
 from itertools import product
 import string
+from selenium.webdriver.chrome.service import Service
+
 
 app = Flask(__name__)
 
@@ -45,8 +47,10 @@ def is_plate_available_selenium(plate):
     opts.add_experimental_option("useAutomationExtension", False)
 
     # Explicit path to chromedriver
-    driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=opts)
-    
+  
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=opts)
+
     try:
         driver.get(api_url)
         time.sleep(1)
