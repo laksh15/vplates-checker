@@ -46,9 +46,8 @@ def is_plate_available_selenium(plate):
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
 
-    # Explicit path to chromedriver
-  
-   driver = webdriver.Chrome(options=opts)
+    # Explicit path to chromedriver Update
+    driver = webdriver.Chrome(options=opts)
 
     try:
         driver.get(api_url)
